@@ -37,7 +37,7 @@ func aesGcmEncrypt(plaintext []byte, keyString string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -132,7 +132,7 @@ func main() {
 		}
 		*key = hex.EncodeToString(newKey)
 	}
-	
+
 	if *inputFile == "" {
 		log.Fatal("Input file is required")
 	}
@@ -144,45 +144,45 @@ func main() {
 	if *bufferSize < 0 {
 		log.Fatal("Buffer size cannot be negative")
 	}
-	
+
 	if *bufferSize > 0 {
 		// Perform stream encryption/decryption
 		file, err := os.Open(*inputFile)
-    if err != nil {
+		if err != nil {
 			log.Fatal("Error reading input file:", err)
-    }
-    defer file.Close()
+		}
+		defer file.Close()
 
-    reader := bufio.NewReader(file)
+		reader := bufio.NewReader(file)
 		var buffer []byte
 		if *encrypt {
 			buffer = make([]byte, *bufferSize)
-		} else if *decrypt{
-			buffer = make([]byte, *bufferSize + NonceSize + TagSize)
+		} else if *decrypt {
+			buffer = make([]byte, *bufferSize+NonceSize+TagSize)
 		}
 		var outputData []byte
 
-    for {
-        bytesRead, err := reader.Read(buffer)
-        if err == io.EOF {
-            break
-        }
-        if err != nil {
-            log.Fatal(err)
-        }
-				
-				var outputDataChunk []byte
-				if *encrypt {
-					outputDataChunk, err = aesGcmEncrypt(buffer[:bytesRead], *key)
-				} else if *decrypt {
-					outputDataChunk, err = aesGcmDecrypt(buffer[:bytesRead], *key)
-				}
-				if err != nil {
-					log.Fatal("Error during stream encryption/decryption:", err)
-				}
+		for {
+			bytesRead, err := reader.Read(buffer)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Fatal(err)
+			}
 
-				outputData = append(outputData, outputDataChunk...)
-    }
+			var outputDataChunk []byte
+			if *encrypt {
+				outputDataChunk, err = aesGcmEncrypt(buffer[:bytesRead], *key)
+			} else if *decrypt {
+				outputDataChunk, err = aesGcmDecrypt(buffer[:bytesRead], *key)
+			}
+			if err != nil {
+				log.Fatal("Error during stream encryption/decryption:", err)
+			}
+
+			outputData = append(outputData, outputDataChunk...)
+		}
 
 		// Write the output data to the output file
 		err = os.WriteFile(*outputFile, outputData, 0644)
