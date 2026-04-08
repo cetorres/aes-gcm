@@ -122,13 +122,39 @@ aes-gcm -d -i output.enc -o decrypted.txt -p YOUR_PASSWORD -b 4096
 
 - Key/Password Security: Keep your encryption key or password safe and secure. If you lose them, you will not be able to decrypt your files.
 - Hex Key Format: The key must be a 32-byte (256-bit) key in hexadecimal format (64 characters long).
-- Password-Derived Key: When using a password, the tool uses scrypt to derive a strong cryptographic key. The salt is hardcoded in the file, which means the same password will always generate the same key.
+- Password-Derived Key: When using a password, the tool uses scrypt to derive a strong cryptographic key.
 - Stream Encryption/Decryption: When using the buffer option, the tool will process the input file in chunks of the size provided. If you are decrypting, make sure the buffer size is bigger than 28 bytes, to make sure it reads at least the nonce plus the tag.
 - Error Messages: The tool displays descriptive error messages when an issue occurs. Check the output carefully when something goes wrong.
 
 ## Contributing
 
 Contributions are welcome! Please feel free to open an issue or submit a pull request for any bug fixes, improvements, or new features.
+
+## Changelog
+
+2026-04-08
+
+- Fixed the hard-coded salt issue. Before, every password-encrypted file used the same salt. An attacker only needed to run scrypt once for their entire dictionary against that salt to get a lookup table that cracks all files ever encrypted by this tool.
+
+  - `aesKeyFromPassword()` now takes a salt []byte parameter instead of using a hard-coded one. The old misleading comment ("Keep the salt secret") is replaced with an accurate one.
+
+  - `SaltSize = 16` constant added (16 bytes / 128 bits, a solid size for scrypt).
+
+  - Added `generateSalt()` to generate a cryptographically random salt with `rand.Reader`.
+
+  - Encrypt path (password mode): now uses `generateSalt()` to generate a random salt, derives the key from it, then prepends the salt to the output. File format: [16-byte salt | 12-byte nonce | ciphertext+tag].
+
+  - Decrypt path (password mode): reads the first 16 bytes as the salt, derives the key, then decrypts the remainder.
+
+  - Stream mode follows the same pattern: salt is written as the first 16 bytes of output on encrypt, and read from the reader before chunk processing on decrypt.
+
+  - The early password→key conversion block has been removed since key derivation must now happen differently for encrypt vs. decrypt.
+
+  - Thanks to [sergeevabc](https://github.com/sergeevabc) to create an issue and point that out.
+
+2025-04-02
+
+- First release.
 
 ## License
 

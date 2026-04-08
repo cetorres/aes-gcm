@@ -19,16 +19,21 @@ import (
 const (
 	NonceSize = 12
 	TagSize   = 16
+	SaltSize  = 16
 )
 
-func aesKeyFromPassword(password string) ([]byte, error) {
-	// An 8 bytes is a good length. Keep the salt secret.
-	// NOTE: Don't use this salt, generate a new one for you!
-	secretSalt := []byte{0x07, 0x2e, 0x12, 0xd7, 0xbc, 0xa3, 0x5b, 0x3a}
-	// Use scrypt to derive a key from the password and salt.
-	// 32768 iterations, 8 bytes of memory, 1 parallel thread, 32 byte key.
-	// The parameters can be adjusted based on your security needs.
-	return scrypt.Key([]byte(password), secretSalt, 32768, 8, 1, 32)
+func generateSalt() ([]byte, error) {
+	salt := make([]byte, SaltSize)
+	_, err := io.ReadFull(rand.Reader, salt)
+	return salt, err
+}
+
+func aesKeyFromPassword(password string, salt []byte) ([]byte, error) {
+	// Salt is not a secret — it is stored alongside the ciphertext so that the
+	// same password can derive the same key on decryption. Its only job is to
+	// be unique per encryption so that a pre-computed table built for
+	// one encrypted file is useless against any other file.
+	return scrypt.Key([]byte(password), salt, 32768, 8, 1, 32)
 }
 
 func aesGcmEncrypt(plaintext []byte, keyString string) ([]byte, error) {
@@ -124,14 +129,6 @@ func main() {
 	if (*key == "" && *password == "") || (*key != "" && *password != "") {
 		log.Fatal("Either a key (in hex format) or a password is required. Not both.")
 	}
-	if *password != "" && *key == "" {
-		// Generate a key from the password
-		newKey, err := aesKeyFromPassword(*password)
-		if err != nil {
-			log.Fatal("Error generating key from password:", err)
-		}
-		*key = hex.EncodeToString(newKey)
-	}
 
 	if *inputFile == "" {
 		log.Fatal("Input file is required")
@@ -154,13 +151,45 @@ func main() {
 		defer file.Close()
 
 		reader := bufio.NewReader(file)
+		var outputData []byte
+		var keyHex string
+
+		if *password != "" {
+			if *encrypt {
+				// Generate a fresh random salt and store it at the start of the output.
+				salt, err := generateSalt()
+				if err != nil {
+					log.Fatal("Error generating salt:", err)
+				}
+				derivedKey, err := aesKeyFromPassword(*password, salt)
+				if err != nil {
+					log.Fatal("Error deriving key from password:", err)
+				}
+				keyHex = hex.EncodeToString(derivedKey)
+				// Prepend salt so decryption can recover it.
+				outputData = append(outputData, salt...)
+			} else {
+				// Read the salt stored at the beginning of the encrypted file.
+				salt := make([]byte, SaltSize)
+				if _, err := io.ReadFull(reader, salt); err != nil {
+					log.Fatal("Error reading salt from file:", err)
+				}
+				derivedKey, err := aesKeyFromPassword(*password, salt)
+				if err != nil {
+					log.Fatal("Error deriving key from password:", err)
+				}
+				keyHex = hex.EncodeToString(derivedKey)
+			}
+		} else {
+			keyHex = *key
+		}
+
 		var buffer []byte
 		if *encrypt {
 			buffer = make([]byte, *bufferSize)
 		} else if *decrypt {
 			buffer = make([]byte, *bufferSize+NonceSize+TagSize)
 		}
-		var outputData []byte
 
 		for {
 			bytesRead, err := reader.Read(buffer)
@@ -173,9 +202,9 @@ func main() {
 
 			var outputDataChunk []byte
 			if *encrypt {
-				outputDataChunk, err = aesGcmEncrypt(buffer[:bytesRead], *key)
+				outputDataChunk, err = aesGcmEncrypt(buffer[:bytesRead], keyHex)
 			} else if *decrypt {
-				outputDataChunk, err = aesGcmDecrypt(buffer[:bytesRead], *key)
+				outputDataChunk, err = aesGcmDecrypt(buffer[:bytesRead], keyHex)
 			}
 			if err != nil {
 				log.Fatal("Error during stream encryption/decryption:", err)
@@ -195,20 +224,60 @@ func main() {
 	} else {
 		// Read the input file
 		inputData, err := os.ReadFile(*inputFile)
-
 		if err != nil {
 			log.Fatal("Error reading input file:", err)
 		}
 
-		// Encrypt or decrypt the input data
 		var outputData []byte
+
 		if *encrypt {
-			outputData, err = aesGcmEncrypt(inputData, *key)
+			var keyHex string
+			if *password != "" {
+				// Generate a fresh random salt and store it at the start of the output.
+				salt, err := generateSalt()
+				if err != nil {
+					log.Fatal("Error generating salt:", err)
+				}
+				derivedKey, err := aesKeyFromPassword(*password, salt)
+				if err != nil {
+					log.Fatal("Error deriving key from password:", err)
+				}
+				keyHex = hex.EncodeToString(derivedKey)
+				encrypted, err := aesGcmEncrypt(inputData, keyHex)
+				if err != nil {
+					log.Fatal("Error during encryption:", err)
+				}
+				// Output: [salt | nonce | ciphertext+tag]
+				outputData = append(salt, encrypted...)
+			} else {
+				outputData, err = aesGcmEncrypt(inputData, *key)
+				if err != nil {
+					log.Fatal("Error during encryption:", err)
+				}
+			}
 		} else if *decrypt {
-			outputData, err = aesGcmDecrypt(inputData, *key)
-		}
-		if err != nil {
-			log.Fatal("Error during encryption/decryption:", err)
+			var keyHex string
+			if *password != "" {
+				if len(inputData) < SaltSize {
+					log.Fatal("Invalid data: file too short to contain a salt")
+				}
+				// Extract the salt stored at the beginning by the encryptor.
+				salt := inputData[:SaltSize]
+				derivedKey, err := aesKeyFromPassword(*password, salt)
+				if err != nil {
+					log.Fatal("Error deriving key from password:", err)
+				}
+				keyHex = hex.EncodeToString(derivedKey)
+				outputData, err = aesGcmDecrypt(inputData[SaltSize:], keyHex)
+				if err != nil {
+					log.Fatal("Error during decryption:", err)
+				}
+			} else {
+				outputData, err = aesGcmDecrypt(inputData, *key)
+				if err != nil {
+					log.Fatal("Error during decryption:", err)
+				}
+			}
 		}
 
 		// Write the output data to the output file
