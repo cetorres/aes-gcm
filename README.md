@@ -1,5 +1,7 @@
 # AES-GCM Command-Line Tool
 
+[![Github all releases](https://img.shields.io/github/downloads/cetorres/aes-gcm/total.svg)](https://github.com/cetorres/aes-gcm/releases/)
+
 This project provides a command-line tool for encrypting and decrypting files using AES-GCM (Advanced Encryption Standard - Galois/Counter Mode). It supports both key-based and password-based encryption/decryption, as well as streaming for large files.
 
 ## Features
